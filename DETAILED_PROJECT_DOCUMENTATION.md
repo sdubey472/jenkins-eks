@@ -59,13 +59,197 @@ This Terraform project automates the complete infrastructure setup for **Jenkins
 
 **High-Level AWS EKS Infrastructure Overview:**
 
+```mermaid
+graph TB
+    subgraph AWS["AWS Region: us-east-1"]
+        subgraph VPC["VPC 10.0.0.0/16"]
+            subgraph IGW_Layer["Internet Layer"]
+                IGW["Internet Gateway"]
+                NAT1["NAT Gateway 1<br/>AZ1 - 10.0.101.0/24"]
+                NAT2["NAT Gateway 2<br/>AZ2 - 10.0.102.0/24"]
+                NAT3["NAT Gateway 3<br/>AZ3 - 10.0.103.0/24"]
+            end
+            
+            subgraph Public_Subnets["Public Subnets Layer"]
+                PubSub1["Public Subnet 1<br/>10.0.101.0/24<br/>us-east-1a"]
+                PubSub2["Public Subnet 2<br/>10.0.102.0/24<br/>us-east-1b"]
+                PubSub3["Public Subnet 3<br/>10.0.103.0/24<br/>us-east-1c"]
+            end
+            
+            subgraph EKS_Layer["EKS Control Plane Layer"]
+                CP["EKS Control Plane<br/>Kubernetes 1.29<br/>Multi-AZ Managed"]
+            end
+            
+            subgraph Private_Subnets["Private Subnets Layer"]
+                PrivSub1["Private Subnet 1<br/>10.0.1.0/24<br/>us-east-1a"]
+                PrivSub2["Private Subnet 2<br/>10.0.2.0/24<br/>us-east-1b"]
+                PrivSub3["Private Subnet 3<br/>10.0.3.0/24<br/>us-east-1c"]
+            end
+            
+            subgraph Nodes["EKS Node Group Layer"]
+                Node1["Node 1<br/>t3.medium<br/>2vCPU, 4GB RAM"]
+                Node2["Node 2<br/>t3.medium<br/>2vCPU, 4GB RAM"]
+                Node3["Node 3<br/>t3.medium<br/>2vCPU, 4GB RAM"]
+            end
+            
+            subgraph Workloads["Kubernetes Workloads"]
+                Jenkins["Jenkins Controller Pod<br/>2.504-jdk21<br/>512Mi-2Gi RAM"]
+                Agent1["Agent Pod 1<br/>Dynamic Spawn"]
+                Agent2["Agent Pod 2<br/>Dynamic Spawn"]
+                Storage["EBS Volume<br/>50Gi gp3<br/>3000 IOPS<br/>Encrypted"]
+            end
+        end
+    end
+    
+    Internet["Internet<br/>0.0.0.0/0"]
+    Users["Users<br/>Jenkins UI<br/>Port 80"]
+    
+    Internet -->|HTTP/HTTPS| IGW
+    IGW --> PubSub1
+    IGW --> PubSub2
+    IGW --> PubSub3
+    
+    NAT1 --> PrivSub1
+    NAT2 --> PrivSub2
+    NAT3 --> PrivSub3
+    
+    PrivSub1 --> Node1
+    PrivSub2 --> Node2
+    PrivSub3 --> Node3
+    
+    Node1 --> Jenkins
+    Node2 --> Agent1
+    Node3 --> Agent2
+    
+    Jenkins --> Storage
+    CP -.->|Controls| Node1
+    CP -.->|Controls| Node2
+    CP -.->|Controls| Node3
+    
+    Users -->|LoadBalancer<br/>Service| Jenkins
+```
+
 ### Terraform Deployment Workflow Diagram
 
 **Complete Infrastructure Deployment Pipeline:**
 
+```mermaid
+sequenceDiagram
+    participant Terraform
+    participant AWS as AWS API
+    participant K8s as Kubernetes API
+    participant Helm as Helm Charts
+
+    Terraform->>Terraform: 1. terraform init
+    Note over Terraform: Load providers, validate
+    
+    Terraform->>AWS: 2. Create VPC & Networking
+    Note over AWS: VPC, Subnets, IGW, NAT<br/>Route Tables, EIPs
+    AWS-->>Terraform: ✓ Complete
+    
+    Terraform->>AWS: 3. Create IAM Roles & SGs
+    Note over AWS: Cluster Role, Node Role<br/>EBS CSI Role, Security Groups
+    AWS-->>Terraform: ✓ Complete
+    
+    Terraform->>AWS: 4. Create EKS Cluster
+    Note over AWS: Kubernetes 1.29<br/>Multi-AZ Control Plane<br/>CloudWatch Logging Enabled<br/>(⏱ 15-20 minutes)
+    AWS-->>Terraform: ✓ Ready
+    
+    Terraform->>AWS: 5. Create Node Group
+    Note over AWS: 3x t3.medium nodes<br/>Launch EC2 instances<br/>Register with cluster<br/>(⏱ 10-15 minutes)
+    AWS-->>Terraform: ✓ Ready
+    
+    Terraform->>K8s: 6. Deploy EKS Add-ons
+    Note over K8s: vpc-cni, coredns<br/>kube-proxy, ebs-csi-driver
+    K8s-->>Terraform: ✓ Complete
+    
+    Terraform->>K8s: 7. Create K8s Resources
+    Note over K8s: Namespace, Storage Class<br/>PVC, Service Account<br/>RBAC Roles
+    K8s-->>Terraform: ✓ Complete
+    
+    Terraform->>Helm: 8. Deploy Jenkins Helm Chart
+    Note over Helm: Add Jenkins repository<br/>Deploy Chart v5.3.1<br/>Install 25+ plugins<br/>(⏱ 10-15 minutes)
+    Helm->>K8s: Create Jenkins StatefulSet
+    K8s->>AWS: Provision EBS Volume
+    AWS-->>K8s: ✓ Volume Ready
+    K8s-->>Helm: ✓ Pod Running
+    Helm-->>Terraform: ✓ Complete
+    
+    Terraform->>Terraform: 9. Generate Outputs
+    Note over Terraform: Cluster endpoint, LB IP<br/>kubectl config command<br/>Storage class details
+    
+    Terraform-->>Terraform: ✓ DEPLOYMENT COMPLETE
+```
+
 ### Resource Dependencies Diagram
 
 **Terraform Resource Dependency Graph:**
+
+```mermaid
+graph TD
+    A["AWS Account"] --> VPC["VPC<br/>10.0.0.0/16<br/>us-east-1"]
+    
+    VPC --> IGW["Internet Gateway"]
+    VPC --> PubSub["Public Subnets<br/>3x /24<br/>10.0.101-103.0/24"]
+    VPC --> PrivSub["Private Subnets<br/>3x /24<br/>10.0.1-3.0/24"]
+    
+    PubSub --> NAT["NAT Gateways<br/>3x one per AZ<br/>with Elastic IPs"]
+    PrivSub --> NAT
+    
+    VPC --> EKSClusterSG["EKS Cluster SG<br/>Port 443 • All Egress"]
+    VPC --> NodesSG["Nodes Security Group<br/>TCP 0-65535 Self<br/>TCP 1025-65535 from Cluster"]
+    
+    VPC --> IAMClusterRole["IAM Cluster Role<br/>EKS Service Assume<br/>+ EKSClusterPolicy<br/>+ VPCResourceController"]
+    
+    VPC --> IAMNodeRole["IAM Node Role<br/>EC2 Service Assume<br/>+ WorkerNodePolicy<br/>+ CNI Policy<br/>+ ECR ReadOnly"]
+    
+    IAMClusterRole --> EKSCluster["EKS Cluster<br/>Kubernetes 1.29<br/>Multi-AZ<br/>CloudWatch Logging<br/>OIDC Provider"]
+    
+    EKSCluster --> NodeGroup["Node Group<br/>3x t3.medium<br/>AL2023 • Desired 3<br/>Min 2 • Max 5"]
+    
+    IAMNodeRole --> NodeGroup
+    NodesSG --> NodeGroup
+    PrivSub --> NodeGroup
+    
+    EKSCluster --> Addons["EKS Add-ons"]
+    Addons --> CNI["vpc-cni<br/>Pod Networking"]
+    Addons --> DNS["coredns<br/>Service Discovery"]
+    Addons --> KubeProxy["kube-proxy<br/>Service Routing"]
+    Addons --> EBSDriver["aws-ebs-csi-driver<br/>Persistent Volumes"]
+    
+    EBSDriver --> EBSDriverRole["EBS CSI Driver Role<br/>OIDC Web Identity<br/>kube-system:ebs-csi-controller-sa<br/>+ EBSCSIDriverPolicy"]
+    
+    NodeGroup --> Namespace["Kubernetes Namespace<br/>jenkins"]
+    EBSDriver --> StorageClass["Storage Class<br/>jenkins-ebs-sc<br/>gp3 • 3000 IOPS<br/>125MB/s • Encrypted"]
+    
+    StorageClass --> PVC["Persistent Volume Claim<br/>jenkins-pvc<br/>50Gi EBS Volume<br/>ReadWriteOnce"]
+    
+    Namespace --> ServiceAccount["Service Account<br/>jenkins<br/>OIDC Enabled"]
+    
+    Namespace --> ClusterRole["Cluster Role<br/>Namespaces • Pods<br/>Events • ConfigMaps<br/>Deployments"]
+    
+    ServiceAccount --> RoleBinding["Cluster Role Binding<br/>Grant permissions<br/>to Jenkins SA"]
+    ClusterRole --> RoleBinding
+    
+    RoleBinding --> HelmRelease["Helm Release<br/>jenkins/jenkins v5.3.1"]
+    
+    HelmRelease --> JenkinsPod["Jenkins Controller Pod<br/>2.504-jdk21<br/>512Mi-2Gi RAM<br/>250m-2000m CPU"]
+    
+    JenkinsPod --> PVC
+    JenkinsPod --> LB["LoadBalancer Service<br/>Port 80 → 8080<br/>AWS NLB"]
+    
+    HelmRelease --> Plugins["25+ Pre-installed Plugins<br/>Pipeline • Kubernetes<br/>Git • Credentials<br/>Docker • Maven • Gradle"]
+    
+    HelmRelease --> Agents["Dynamic Agents<br/>On-demand Pods<br/>Auto-terminating<br/>Kubernetes Plugin"]
+    
+    style A fill:#FF9900
+    style VPC fill:#FF9900
+    style EKSCluster fill:#FF9900
+    style NodeGroup fill:#FF9900
+    style Namespace fill:#4B9BFF
+    style HelmRelease fill:#4B9BFF
+    style JenkinsPod fill:#4B9BFF
+```
 
 ---
 
@@ -90,6 +274,93 @@ VPC CIDR: 10.0.0.0/16 (65,536 IPs)
 ### Network Flow Diagram
 
 **Complete Data Flow Through Network Layers:**
+
+```mermaid
+graph TB
+    subgraph Internet["Internet & Users"]
+        User["👥 Internet Users<br/>Jenkins UI Access<br/>Port 80/443"]
+    end
+    
+    subgraph IGWLayer["AWS IGW & NAT Layer"]
+        IGW["Internet Gateway<br/>Route: 0.0.0.0/0<br/>Bidirectional Traffic"]
+        NAT1["NAT Gateway 1<br/>AZ1 • EIP<br/>Public Subnet"]
+        NAT2["NAT Gateway 2<br/>AZ2 • EIP<br/>Public Subnet"]
+        NAT3["NAT Gateway 3<br/>AZ3 • EIP<br/>Public Subnet"]
+    end
+    
+    subgraph PublicLayer["Public Subnets Layer<br/>Reserved for NAT Only"]
+        PubSub1["Public Subnet 1<br/>10.0.101.0/24<br/>Route: 0.0.0.0/0→IGW"]
+        PubSub2["Public Subnet 2<br/>10.0.102.0/24<br/>Route: 0.0.0.0/0→IGW"]
+        PubSub3["Public Subnet 3<br/>10.0.103.0/24<br/>Route: 0.0.0.0/0→IGW"]
+    end
+    
+    subgraph PrivateLayer["Private Subnets Layer<br/>EKS Nodes & Pods"]
+        PrivSub1["Private Subnet 1 AZ1<br/>10.0.1.0/24<br/>Route: 0.0.0.0/0→NAT1"]
+        PrivSub2["Private Subnet 2 AZ2<br/>10.0.2.0/24<br/>Route: 0.0.0.0/0→NAT2"]
+        PrivSub3["Private Subnet 3 AZ3<br/>10.0.3.0/24<br/>Route: 0.0.0.0/0→NAT3"]
+    end
+    
+    subgraph EKSLayer["EKS Nodes Layer"]
+        Node1["EC2 Node 1<br/>t3.medium<br/>2vCPU • 4GB RAM"]
+        Node2["EC2 Node 2<br/>t3.medium<br/>2vCPU • 4GB RAM"]
+        Node3["EC2 Node 3<br/>t3.medium<br/>2vCPU • 4GB RAM"]
+    end
+    
+    subgraph PodLayer["Kubernetes Pods Layer"]
+        Jenkins["🔵 Jenkins Pod<br/>Port 8080 Internal<br/>512Mi-2Gi RAM"]
+        Agent1["🟢 Agent Pod 1"]
+        Agent2["🟢 Agent Pod 2"]
+    end
+    
+    subgraph ServiceLayer["Kubernetes Services"]
+        LB["LoadBalancer Service<br/>Port 80 External<br/>Targets: jenkins-0<br/>AWS NLB"]
+    end
+    
+    subgraph StorageLayer["Storage & EBS"]
+        PVC["PVC: jenkins-pvc<br/>50Gi • gp3<br/>3000 IOPS • Encrypted"]
+        EBS["EBS Volume<br/>us-east-1a<br/>Attached to Node 1"]
+    end
+    
+    User -->|HTTP Request<br/>Port 80| IGW
+    IGW --> PubSub1
+    IGW --> PubSub2
+    IGW --> PubSub3
+    
+    PubSub1 --> NAT1
+    PubSub2 --> NAT2
+    PubSub3 --> NAT3
+    
+    NAT1 --> PrivSub1
+    NAT2 --> PrivSub2
+    NAT3 --> PrivSub3
+    
+    PrivSub1 --> Node1
+    PrivSub2 --> Node2
+    PrivSub3 --> Node3
+    
+    Node1 --> Jenkins
+    Node2 --> Agent1
+    Node3 --> Agent2
+    
+    Jenkins --> PVC
+    PVC --> EBS
+    
+    User -->|LoadBalancer<br/>Service| LB
+    LB -->|Service Discovery<br/>kube-proxy| Jenkins
+    
+    Jenkins -->|Outbound Traffic<br/>Package Downloads| NAT1
+    Agent1 -->|Outbound Traffic<br/>Build Artifacts| NAT2
+    Agent2 -->|Outbound Traffic<br/>SCM Clones| NAT3
+    
+    style Internet fill:#90EE90
+    style IGWLayer fill:#FFB6C1
+    style PublicLayer fill:#FFD700
+    style PrivateLayer fill:#87CEEB
+    style EKSLayer fill:#DDA0DD
+    style PodLayer fill:#98FB98
+    style ServiceLayer fill:#F0E68C
+    style StorageLayer fill:#B0C4DE
+```
 
 ### Security Group Rules
 
@@ -636,6 +907,90 @@ RBAC Settings:
 
 ---
 
+## Security Architecture Diagram
+
+**5-Layer Defense Model:**
+
+```mermaid
+graph LR
+    subgraph SecurityLayers["Security Architecture Layers"]
+        
+        subgraph Layer1["Layer 1: Network Security"]
+            VPC["🔒 VPC Isolation<br/>10.0.0.0/16<br/>Private by default"]
+            SG1["Security Group 1<br/>EKS Cluster<br/>Port 443 only"]
+            SG2["Security Group 2<br/>EKS Nodes<br/>Pod networking only"]
+            NAT["NAT Gateways<br/>Outbound via static IPs"]
+        end
+        
+        subgraph Layer2["Layer 2: IAM & RBAC"]
+            IAM["IAM Roles<br/>Least privilege<br/>Assume policies"]
+            RBAC["Kubernetes RBAC<br/>ClusterRole<br/>ServiceAccount binding"]
+            OIDC["OIDC Provider<br/>IRSA<br/>Assume AWS roles"]
+        end
+        
+        subgraph Layer3["Layer 3: Data Security"]
+            EBS["EBS Encryption<br/>AES-256<br/>aws/ebs KMS key"]
+            ETCD["Kubernetes ETCD<br/>AWS managed<br/>Encrypted at rest"]
+            TLS["TLS/HTTPS<br/>Certificate validation<br/>Mutual TLS"]
+        end
+        
+        subgraph Layer4["Layer 4: Secrets Management"]
+            Creds["Kubernetes Secrets<br/>Service accounts<br/>API tokens"]
+            Jenkins["Jenkins Credentials<br/>Plugin encrypted<br/>AWS Secrets integration"]
+            Plugins["Credentials Plugins<br/>aws-credentials<br/>credentials-binding"]
+        end
+        
+        subgraph Layer5["Layer 5: Access Control"]
+            Authn["Authentication<br/>AWS IAM<br/>Kubernetes tokens"]
+            Authz["Authorization<br/>IAM policies<br/>RBAC rules"]
+            Audit["Audit Logging<br/>CloudWatch logs<br/>API audit trail"]
+        end
+    end
+    
+    User["👤 Jenkins User<br/>Port 80<br/>HTTP Request"]
+    
+    Threat1["🛡️ Blocks: Unauthorized network access"]
+    Threat2["🛡️ Blocks: Privilege escalation"]
+    Threat3["🛡️ Blocks: Data interception"]
+    Threat4["🛡️ Blocks: Credential exposure"]
+    Threat5["🛡️ Blocks: Unauthorized operations"]
+    
+    User -->|Request| Layer1
+    Layer1 -->|Network isolation| Threat1
+    Layer1 --> Layer2
+    
+    Layer2 -->|Identity & Access| Threat2
+    Layer2 --> Layer3
+    
+    Layer3 -->|Data protection| Threat3
+    Layer3 --> Layer4
+    
+    Layer4 -->|Secret management| Threat4
+    Layer4 --> Layer5
+    
+    Layer5 -->|Audit & Accountability| Threat5
+    Layer5 --> Jenkins["✅ Jenkins Pod<br/>Only authorized<br/>operations"]
+    
+    style VPC fill:#FF6B6B
+    style SG1 fill:#FF8E72
+    style SG2 fill:#FF8E72
+    style NAT fill:#FFA94D
+    style IAM fill:#FFD93D
+    style RBAC fill:#FFD93D
+    style OIDC fill:#FFD93D
+    style EBS fill:#74B9FF
+    style ETCD fill:#6C5CE7
+    style TLS fill:#6C5CE7
+    style Creds fill:#00B894
+    style Jenkins fill:#00B894
+    style Plugins fill:#00B894
+    style Authn fill:#FD79A8
+    style Authz fill:#FD79A8
+    style Audit fill:#FD79A8
+```
+
+---
+
 ## Detailed EKS Cluster Specifications
 
 ### EKS Control Plane Architecture
@@ -937,6 +1292,121 @@ Kubernetes Agent Configuration:
    ├─ Resource Efficiency: Only running pods consume resources
    ├─ Horizontal Scaling: Multiple agents for parallel builds
    └─ Sandbox: Isolated pod per build
+```
+
+---
+
+## Jenkins Build Lifecycle on Kubernetes
+
+**Complete Build Execution Flow:**
+
+```mermaid
+graph TB
+    subgraph BuildLifecycle["Build Execution Lifecycle"]
+        
+        subgraph Stage1["1️⃣ Trigger Phase"]
+            Webhook["Webhook from Git<br/>GitHub/GitLab push"]
+            Trigger["Jenkins receives event<br/>Match pipeline triggers"]
+            QueueJob["Job queued<br/>Wait for executor"]
+        end
+        
+        subgraph Stage2["2️⃣ Agent Provisioning"]
+            KubernetesPod["Kubernetes pod created<br/>jenkins/inbound-agent<br/>jenkins namespace"]
+            Mount["PVC mounted<br/>Shared workspace"]
+            Connect["Agent connects<br/>To Jenkins master<br/>JNLP protocol"]
+            Ready["Agent ready<br/>Waiting for steps"]
+        end
+        
+        subgraph Stage3["3️⃣ Build Execution"]
+            Clone["Step 1: Clone source<br/>git clone<br/>Via NAT gateway"]
+            Build["Step 2: Build code<br/>Maven/Gradle/npm<br/>On agent pod"]
+            Test["Step 3: Run tests<br/>Unit tests<br/>Integration tests"]
+            Package["Step 4: Package app<br/>Docker build<br/>Create image"]
+        end
+        
+        subgraph Stage4["4️⃣ Artifact Storage"]
+            Docker["Docker push<br/>To AWS ECR<br/>Via NAT gateway"]
+            S3["Upload artifacts<br/>To S3 bucket<br/>Or EBS cache"]
+            Log["Store logs<br/>In Jenkins PVC<br/>Persistent storage"]
+        end
+        
+        subgraph Stage5["5️⃣ Cleanup"]
+            AgentShutdown["Agent graceful shutdown<br/>Runs post-build steps"]
+            PodDelete["Pod terminated<br/>Kubernetes removes<br/>kubernetes namespace"]
+            ResourceClean["Resources released<br/>PVC unmounted<br/>ephemeral storage cleaned"]
+            Success["Build complete<br/>Logs stored<br/>Artifacts available"]
+        end
+        
+        subgraph Storage["Persistent Storage"]
+            JENKINSPVC["Jenkins PVC<br/>50Gi EBS<br/>Build history<br/>Logs & configs<br/>Job definitions"]
+            AGENTFILES["Agent workspace<br/>emptyDir<br/>Temporary per-build<br/>Auto-cleaned"]
+            S3STORAGE["S3 Buckets<br/>Docker images<br/>Build artifacts<br/>External logs"]
+        end
+    end
+    
+    Monitor["📊 Monitoring"]
+    
+    Webhook --> Trigger
+    Trigger --> QueueJob
+    
+    QueueJob --> KubernetesPod
+    KubernetesPod --> Mount
+    Mount --> Connect
+    Connect --> Ready
+    
+    Ready --> Clone
+    Clone --> Build
+    Build --> Test
+    Test --> Package
+    
+    Package --> Docker
+    Docker --> S3
+    S3 --> Log
+    
+    Log --> AgentShutdown
+    AgentShutdown --> PodDelete
+    PodDelete --> ResourceClean
+    ResourceClean --> Success
+    
+    Clone -.->|Workspace| AGENTFILES
+    Build -.->|Build cache| AGENTFILES
+    Test -.->|Test results| AGENTFILES
+    Package -.->|Docker context| AGENTFILES
+    
+    Log -->|Persisted| JENKINSPVC
+    Clone -->|Logs| JENKINSPVC
+    Build -->|Logs| JENKINSPVC
+    Test -->|Results| JENKINSPVC
+    
+    Docker -->|Images| S3STORAGE
+    Package -->|Artifacts| S3STORAGE
+    
+    QueueJob -.->|Queue status| Monitor
+    Ready -.->|Agent status| Monitor
+    Build -.->|Progress| Monitor
+    Success -.->|Build result| Monitor
+    
+    style Webhook fill:#90EE90
+    style Trigger fill:#90EE90
+    style QueueJob fill:#90EE90
+    style KubernetesPod fill:#FFD700
+    style Mount fill:#FFD700
+    style Connect fill:#FFD700
+    style Ready fill:#FFD700
+    style Clone fill:#87CEEB
+    style Build fill:#87CEEB
+    style Test fill:#87CEEB
+    style Package fill:#87CEEB
+    style Docker fill:#DDA0DD
+    style S3 fill:#DDA0DD
+    style Log fill:#DDA0DD
+    style AgentShutdown fill:#F08080
+    style PodDelete fill:#F08080
+    style ResourceClean fill:#F08080
+    style Success fill:#90EE90
+    style JENKINSPVC fill:#98FB98
+    style AGENTFILES fill:#D3D3D3
+    style S3STORAGE fill:#FFB6C1
 ```
 
 ---
