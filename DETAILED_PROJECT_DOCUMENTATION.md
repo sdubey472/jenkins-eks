@@ -57,254 +57,15 @@ This Terraform project automates the complete infrastructure setup for **Jenkins
 
 ### System Architecture Diagram
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                          AWS Region: us-east-1                          │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ┌────────────────────────────────────────────────────────────────┐    │
-│  │              VPC (CIDR: 10.0.0.0/16)                           │    │
-│  │                                                                │    │
-│  │  ┌──────────────────────────────────────────────────────────┐ │    │
-│  │  │                   Internet Gateway                        │ │    │
-│  │  └──────────────────────────────────────────────────────────┘ │    │
-│  │                        ▲                                        │    │
-│  │                        │                                        │    │
-│  │     ┌──────────────────┼──────────────────┬─────────────────┐ │    │
-│  │     │                  │                  │                 │ │    │
-│  │  ┌──┴──┐          ┌────┴────┐         ┌───┴───┐      ┌────┴─┴──┐  │
-│  │  │ AZ1 │          │   AZ2   │         │  AZ3  │      │ AZ* NAT │  │
-│  │  │     │          │         │         │       │      │ Gateway │  │
-│  │  └──┬──┘          └────┬────┘         └───┬───┘      └────┬────┘  │
-│  │     │                  │                  │                │      │
-│  │  ┌──┴────────────┐  ┌──┴────────────┐  ┌─┴─────────────┐  │      │
-│  │  │ Public Subnet │  │ Public Subnet │  │ Public Subnet │  │      │
-│  │  │ 10.0.101.0/24 │  │ 10.0.102.0/24 │  │ 10.0.103.0/24 │  │      │
-│  │  │               │  │               │  │               │  │      │
-│  │  └───────────────┘  └───────────────┘  └───────────────┘  │      │
-│  │        (No running resources)                               │      │
-│  │                                                              │      │
-│  │  ┌──────────────────────────────────────────────────────┐  │      │
-│  │  │              Private Subnets (3x)                     │  │      │
-│  │  │                                                       │  │      │
-│  │  │  ┌────────────────┬────────────────┬──────────────┐  │  │      │
-│  │  │  │ 10.0.1.0/24    │ 10.0.2.0/24    │ 10.0.3.0/24 │  │  │      │
-│  │  │  │                │                │              │  │  │      │
-│  │  │  │  ┌──────────┐  │  ┌──────────┐  │ ┌──────────┐ │  │  │      │
-│  │  │  │  │  EKS Node│  │  │ EKS Node │  │ │ EKS Node │ │  │  │      │
-│  │  │  │  │          │  │  │          │  │ │          │ │  │  │      │
-│  │  │  │  └──────────┘  │  └──────────┘  │ └──────────┘ │  │  │      │
-│  │  │  │                │                │              │  │  │      │
-│  │  │  │  ┌────────────┐│ ┌────────────┐ │┌────────────┐│  │  │      │
-│  │  │  │  │  Jenkins   ││ │  Jenkins   │ ││  Jenkins   ││  │  │      │
-│  │  │  │  │  Pod       ││ │  Pod       │ ││  Pod       ││  │  │      │
-│  │  │  │  │(Primary)   ││ │(Agent)     │ ││  (Agent)   ││  │  │      │
-│  │  │  │  └────────────┘│ └────────────┘ │└────────────┘│  │  │      │
-│  │  │  │       │        │       │        │      │       │  │  │      │
-│  │  │  │  ┌────▼─────┐  │  ┌───┬┴──┐     │  ┌───┴──┐    │  │  │      │
-│  │  │  │  │EBS Volume│  │  │EBS Vol││    │  │EBS Vol   │  │  │      │
-│  │  │  │  │(50 Gi)   │  │  │(PVC)  ││    │  │(PVC)     │  │  │      │
-│  │  │  │  └──────────┘  │  └────────┘    │  └──────────┘  │  │      │
-│  │  │  │                │                │              │  │  │      │
-│  │  │  └────────────────┴────────────────┴──────────────┘  │  │      │
-│  │  │                                                       │  │      │
-│  │  │             EKS Control Plane                        │  │      │
-│  │  │        (Managed by AWS - Multi-AZ)                 │  │      │
-│  │  │                                                       │  │      │
-│  │  └───────────────────────────────────────────────────────┘  │      │
-│  │                                                              │      │
-│  └──────────────────────────────────────────────────────────────┘      │
-│                                                                          │
-└─────────────────────────────────────────────────────────────────────────┘
-```
+**High-Level AWS EKS Infrastructure Overview:**
 
-### Workflow Diagram - Terraform Deployment Flow
+### Terraform Deployment Workflow Diagram
 
-```
-START
-  │
-  ├─→ Initialize Terraform
-  │   └─→ Load main.tf (providers, backend)
-  │
-  ├─→ Create AWS Networking
-  │   ├─→ VPC (10.0.0.0/16)
-  │   ├─→ 3x Public Subnets (10.0.101-103.0/24)
-  │   ├─→ 3x Private Subnets (10.0.1-3.0/24)
-  │   ├─→ Internet Gateway
-  │   ├─→ 3x NAT Gateways (with EIP)
-  │   ├─→ Public Route Table → IGW
-  │   └─→ 3x Private Route Tables → NAT Gateways
-  │
-  ├─→ Create EKS Cluster
-  │   ├─→ IAM Role for EKS Control Plane
-  │   ├─→ Security Group for Cluster API
-  │   ├─→ EKS Cluster (v1.29, Multi-AZ)
-  │   ├─→ Enable Cluster Logging (API, Audit, Auth, ControllerManager, Scheduler)
-  │   └─→ OIDC Provider (for IRSA)
-  │
-  ├─→ Create EKS Node Group
-  │   ├─→ IAM Role for Worker Nodes
-  │   ├─→ Attach Node Policies (CNI, ECR, Worker)
-  │   ├─→ Security Group for Nodes
-  │   ├─→ Node Group Configuration
-  │   │   ├─→ Instance Type: t3.medium
-  │   │   ├─→ Desired Size: 3
-  │   │   ├─→ Min Size: 2, Max Size: 5
-  │   │   └─→ AMI: AL2023_x86_64_STANDARD
-  │   └─→ Deploy with Auto-scaling Enabled
-  │
-  ├─→ Deploy EKS Add-ons
-  │   ├─→ vpc-cni (Container Networking Interface)
-  │   ├─→ coredns (DNS Resolution)
-  │   ├─→ kube-proxy (Network Proxy)
-  │   ├─→ aws-ebs-csi-driver (Persistent Volumes)
-  │   └─→ IAM OIDC Role for EBS CSI Driver
-  │
-  ├─→ Configure Kubernetes Provider
-  │   ├─→ Connect to EKS Cluster API
-  │   ├─→ Authenticate using AWS IAM
-  │   └─→ Ready for Kubernetes Resources
-  │
-  ├─→ Create Kubernetes Resources
-  │   ├─→ Jenkins Namespace
-  │   ├─→ EBS Storage Class (gp3, 3000 IOPS, 125 MB/s)
-  │   ├─→ Persistent Volume Claim (50Gi)
-  │   ├─→ Service Account (Jenkins)
-  │   ├─→ Cluster Role (RBAC permissions)
-  │   └─→ Cluster Role Binding
-  │
-  ├─→ Deploy Jenkins via Helm
-  │   ├─→ Add Jenkins Helm Repository
-  │   ├─→ Deploy Jenkins Chart v5.3.1
-  │   ├─→ Configure Jenkins Controller
-  │   │   ├─→ Image: 2.504-jdk21
-  │   │   ├─→ Service Type: LoadBalancer
-  │   │   ├─→ Service Port: 80 (external) → 8080 (container)
-  │   │   ├─→ Memory: 512Mi - 2Gi
-  │   │   ├─→ CPU: 250m - 2000m
-  │   │   ├─→ Default Admin Credentials
-  │   │   └─→ Install 25+ Enterprise Plugins
-  │   ├─→ Enable Persistent Storage
-  │   ├─→ Configure Agent Namespace
-  │   └─→ Enable RBAC
-  │
-  ├─→ Generate Outputs
-  │   ├─→ EKS Cluster Details (ID, Name, Endpoint)
-  │   ├─→ VPC & Subnet Information
-  │   ├─→ Security Group IDs
-  │   ├─→ kubectl Configuration Command
-  │   ├─→ Jenkins Namespace
-  │   └─→ Storage Class Details
-  │
-  └─→ COMPLETE: Infrastructure Ready
-      └─→ Access Jenkins via LoadBalancer
-```
+**Complete Infrastructure Deployment Pipeline:**
 
 ### Resource Dependencies Diagram
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     AWS EKS Architecture                         │
-└─────────────────────────────────────────────────────────────────┘
-
-┌─ VPC Setup
-│  ├─ VPC (10.0.0.0/16)
-│  │  ├─→ Internet Gateway
-│  │  ├─→ 3 Public Subnets (10.0.101-103.0/24)
-│  │  │  └─→ Public Route Table
-│  │  │     └─→ Route to IGW (0.0.0.0/0)
-│  │  │
-│  │  ├─→ 3 Private Subnets (10.0.1-3.0/24)
-│  │  │  ├─→ 3 NAT Gateways (one per AZ, in public subnets)
-│  │  │  ├─→ 3 Elastic IPs (for NAT)
-│  │  │  └─→ 3 Private Route Tables
-│  │  │     └─→ Routes to NAT Gateways (0.0.0.0/0)
-│  │  │
-│  │  └─→ Security Groups
-│  │     ├─→ EKS Cluster SG (inbound 443/HTTPS)
-│  │     └─→ EKS Nodes SG (inbound TCP 1025-65535)
-
-├─ EKS Control Plane
-│  ├─→ IAM Role (EKS Service Assume Role)
-│  │  └─→ AmazonEKSClusterPolicy
-│  │  └─→ AmazonEKSVPCResourceController
-│  │
-│  └─→ EKS Cluster Resource
-│     ├─→ Kubernetes 1.29
-│     ├─→ Multi-AZ (Public + Private subnets)
-│     ├─→ CloudWatch Logs (5 log types)
-│     ├─→ OIDC Provider (for IRSA)
-│     └─→ Cluster Security Group
-
-├─ EKS Node Group
-│  ├─→ IAM Role (EC2 Service Assume Role)
-│  │  ├─→ AmazonEKSWorkerNodePolicy
-│  │  ├─→ AmazonEKS_CNI_Policy
-│  │  └─→ AmazonEC2ContainerRegistryReadOnly
-│  │
-│  ├─→ Node Groups (3 t3.medium nodes)
-│  │  └─→ Deployed in Private Subnets
-│  │
-│  └─→ Node Security Groups
-│     ├─→ Inter-node communication (TCP 0-65535)
-│     └─→ Cluster to node (TCP 1025-65535)
-
-├─ EKS Add-ons
-│  ├─→ vpc-cni (Container Networking)
-│  ├─→ coredns (DNS)
-│  ├─→ kube-proxy (Network Proxy)
-│  │
-│  └─→ aws-ebs-csi-driver
-│     └─→ IAM Role (Web Identity OIDC)
-│        ├─→ OIDC Provider URL
-│        ├─→ Service Account: ebs-csi-controller-sa
-│        └─→ AmazonEBSCSIDriverPolicy
-
-├─ Kubernetes Resources (Jenkins Namespace)
-│  ├─→ Namespace: jenkins
-│  │
-│  ├─→ Storage
-│  │  ├─→ Storage Class (EBS gp3)
-│  │  │  ├─→ IOPS: 3000
-│  │  │  ├─→ Throughput: 125 MB/s
-│  │  │  ├─→ Encrypted: true
-│  │  │  └─→ Type: gp3
-│  │  │
-│  │  └─→ Persistent Volume Claim (50Gi)
-│  │
-│  ├─→ RBAC
-│  │  ├─→ Service Account (jenkins)
-│  │  ├─→ Cluster Role (jenkins permissions)
-│  │  └─→ Cluster Role Binding
-│  │
-│  └─→ Helm Release (Jenkins)
-│     ├─→ Chart: jenkins/jenkins v5.3.1
-│     ├─→ Controller Pod
-│     │  ├─→ Image: jenkins:2.504-jdk21
-│     │  ├─→ Requests: 250m CPU, 512Mi RAM
-│     │  ├─→ Limits: 2000m CPU, 2Gi RAM
-│     │  └─→ Volume: PVC (50Gi EBS)
-│     │
-│     ├─→ Service (LoadBalancer)
-│     │  ├─→ External Port: 80
-│     │  ├─→ Pod Port: 8080
-│     │  └─→ Type: AWS ELB
-│     │
-│     ├─→ Agent Nodes (dynamic)
-│     │  └─→ Spawned on-demand in jenkins namespace
-│     │
-│     ├─→ Plugins (25+)
-│     │  ├─→ Pipeline & Workflow
-│     │  ├─→ Kubernetes Integration
-│     │  ├─→ Git & Source Control
-│     │  ├─→ Credentials & Secrets
-│     │  ├─→ Docker & Build Tools
-│     │  └─→ Configuration as Code
-│     │
-│     └─→ Default Admin Credentials
-│        ├─→ Username: admin
-│        └─→ Password: ChangeMePassword123!
-```
+**Terraform Resource Dependency Graph:**
 
 ---
 
@@ -328,38 +89,7 @@ VPC CIDR: 10.0.0.0/16 (65,536 IPs)
 
 ### Network Flow Diagram
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      INTERNET (0.0.0.0/0)                   │
-└────────────────────────┬────────────────────────────────────┘
-                         │
-                    [IGW: IGW]
-                         │
-        ┌────────────────┴────────────────┐
-        │                                 │
-    [Public RT]                      [NAT Gateways]
-        │                                 │
-        │                    ┌────────────┼────────────┐
-        │                    │            │            │
-    [Public SN-1]       [NAT-AZ1]   [NAT-AZ2]   [NAT-AZ3]
-    (10.0.101.0/24)     (EIP)       (EIP)       (EIP)
-    No workloads            ▲            ▲            ▲
-     (Reserved)             │            │            │
-                    ┌──────┴───┬────────┴──┬──────┬───┘
-                    │          │            │      │
-              [Priv RT-1]  [Priv RT-2]  [Priv RT-3]
-                    │          │            │
-             [Private SN-1][Private SN-2][Private SN-3]
-             (10.0.1.0/24) (10.0.2.0/24) (10.0.3.0/24)
-                    │          │            │
-                    ├──────────┼────────────┤
-                    │
-              [EKS Nodes]
-                    │
-                    ├─ Pods with private IPs
-                    ├─ Services (LoadBalancer/ClusterIP)
-                    └─ PVCs mounted from EBS
-```
+**Complete Data Flow Through Network Layers:**
 
 ### Security Group Rules
 
@@ -902,6 +632,311 @@ RBAC Settings:
 │  ├─ Create: false
 │  └─ Name: jenkins (existing service account)
 └─ Purpose: Jenkins operates with defined permissions
+```
+
+---
+
+## Detailed EKS Cluster Specifications
+
+### EKS Control Plane Architecture
+```
+EKS Cluster: jenkins-eks-eks
+├─ Kubernetes Version: 1.29
+├─ Multi-AZ Deployment: 3+ availability zones
+├─ Managed by AWS: Automatic updates, patching, scaling
+├─ Endpoint Configuration:
+│  ├─ Public Endpoint: https://<cluster-endpoint>
+│  ├─ Private Endpoint: Only from VPC
+│  └─ Port: 443 (HTTPS only)
+│
+├─ CloudWatch Logging: 5 Log Groups
+│  ├─ /aws/eks/jenkins-eks-eks/cluster
+│  │  └─ API server logs (all API requests)
+│  ├─ /aws/eks/jenkins-eks-eks/audit
+│  │  └─ Audit logs (compliance, security events)
+│  ├─ /aws/eks/jenkins-eks-eks/authenticator
+│  │  └─ Authentication events (token validation)
+│  ├─ /aws/eks/jenkins-eks-eks/controllerManager
+│  │  └─ Controller manager operations
+│  └─ /aws/eks/jenkins-eks-eks/scheduler
+│     └─ Pod scheduling decisions (every pod placement)
+│
+├─ Default Compute Resources
+│  ├─ kube-system namespace pods: ~8-10 pods
+│  ├─ kube-node-lease namespace
+│  ├─ default namespace
+│  └─ jenkins namespace (our application)
+│
+└─ Master Node Capacity (Managed)
+   ├─ Automatically scaled by AWS
+   ├─ Uses aws/control-plane instance types (not visible)
+   └─ Always multi-AZ for high availability
+```
+
+### Node Group Configuration Details
+```
+Node Group: jenkins-eks-node-group
+
+Instance Type Specifications (t3.medium):
+├─ vCPU: 2
+├─ Memory: 4 GiB
+├─ Network Performance: Moderate
+├─ CPU Credits: Burstable (T3 family)
+│  ├─ Baseline: 20% CPU capacity
+│  ├─ Burst: Up to 100% CPU (when credits available)
+│  └─ Good for: Bursty workloads, Jenkins builds
+├─ Storage: EBS Only (root disk, not data)
+├─ Max ENI: 3 (network interfaces)
+├─ Max IPs per ENI: 10
+└─ Max pods per node: 29 (t3.medium limitation)
+   └─ Formula: (ENI × IP per ENI) - 1
+
+Scaling Configuration:
+├─ Minimum Nodes: 2
+│  └─ Ensures 1 node failure handled
+├─ Desired Nodes: 3
+│  ├─ One per AZ for distribution
+│  └─ Handles normal workloads
+├─ Maximum Nodes: 5
+│  └─ Prevents runaway costs
+└─ Auto-scaling Policy: Cluster autoscaler
+   ├─ Scales up: When pods pending >30 seconds
+   ├─ Scales down: After 10 minutes of 50% underutilization
+   └─ Respects: min/max node limits
+
+AMI Configuration:
+├─ Type: AL2023_x86_64_STANDARD
+├─ OS: Amazon Linux 2023
+├─ Pre-installed: kubelet, kube-proxy, docker
+├─ Security Updates: Automatic
+├─ Disk Size: 50GB root volume
+└─ Volumes:
+   ├─ Root: /dev/xvda (50GB)
+   └─ Available: ~45GB after OS
+
+Node Lifecycle:
+├─ Launch: EC2 instance creation
+├─ Boot: ~3-5 minutes
+├─ Registration: Automatic with control plane
+├─ Status Conditions:
+│  ├─ Ready (can accept pods)
+│  ├─ MemoryPressure (low memory)
+│  ├─ DiskPressure (low disk)
+│  └─ PIDPressure (too many processes)
+└─ Termination: Graceful (drain pods first)
+```
+
+### Kubernetes Resource Specifications
+```
+Jenkins Namespace Resources:
+
+Storage Class (jenkins-ebs-sc):
+├─ Provisioner: ebs.csi.aws.com
+├─ Parameters:
+│  ├─ type: gp3
+│  ├─ iops: 3000
+│  ├─ throughput: 125 (MB/s)
+│  └─ encrypted: "true"
+├─ Reclaim Policy: Delete
+├─ Allow Expansion: true
+└─ Binding Mode: Immediate (no PVC → PV binding delay)
+
+Persistent Volume Claim (jenkins-pvc):
+├─ Size: 50Gi
+├─ Access Mode: ReadWriteOnce
+│  └─ Only one pod can write at a time
+├─ Storage Class: jenkins-ebs-sc
+├─ Mount Path: /var/jenkins_home
+├─ Used For:
+│  ├─ Jenkins configuration files (~50MB)
+│  ├─ Job definitions and history (~1-2GB)
+│  ├─ Build workspace cache (~5-10GB)
+│  ├─ Plugins directory (~2-3GB)
+│  └─ User data and backups (~30GB available)
+└─ Backup: Manual via AWS snapshots
+
+Service Account (jenkins):
+├─ Namespace: jenkins
+├─ Token: Automatically mounted
+├─ OIDC Integration: Yes
+├─ Can Assume AWS Roles: Yes (via IRSA)
+└─ Permissions: Defined by ClusterRole
+
+ClusterRole (jenkins):
+├─ Resources Pods Can Access:
+│  ├─ namespaces: [get, list, watch]
+│  ├─ pods: [get, list, watch, create, delete]
+│  ├─ pod/log: [get, list]
+│  ├─ events: [get, list, watch]
+│  ├─ configmaps: [get, create, delete]
+│  ├─ secrets: [] (intentionally restricted)
+│  ├─ deployments: [get, list, watch, create, update, patch, delete]
+│  └─ statefulsets: [get, list, watch, create, update, patch, delete]
+│
+├─ Resources Jenkins CANNOT Access:
+│  ├─ secrets (except plugin-managed)
+│  ├─ rolebindings
+│  ├─ clusterrolebindings
+│  ├─ nodes (can't modify cluster)
+│  └─ persistentvolumes (can't modify storage)
+│
+└─ Scope: Cluster-wide (not namespace-scoped)
+```
+
+### Jenkins Helm Release Details
+```
+Helm Chart: jenkins/jenkins v5.3.1
+
+Controller Pod Specification:
+├─ Image: jenkins:2.504-jdk21
+│  ├─ Base: Debian 11
+│  ├─ Java: JDK 21
+│  ├─ Jenkins: LTS (Long-Term Support) v2.504
+│  └─ Size: ~400-500MB
+│
+├─ Resource Requests (Guaranteed):
+│  ├─ CPU: 250m (0.25 vCPUs)
+│  │  └─ Typical idle usage: 50-150m
+│  └─ Memory: 512Mi
+│     └─ Typical idle usage: 400-600Mi
+│
+├─ Resource Limits (Hard Limit):
+│  ├─ CPU: 2000m (2 vCPUs - burstable on t3.medium)
+│  └─ Memory: 2Gi (pod killed if exceeds)
+│
+├─ Java Configuration:
+│  ├─ Xms (Initial Heap): 512m
+│  ├─ Xmx (Max Heap): 512m
+│  └─ Note: Must be ≤ container memory limit
+│
+├─ Service Configuration:
+│  ├─ Type: LoadBalancer
+│  ├─ External Port: 80 (HTTP)
+│  ├─ Target Port: 8080 (Jenkins)
+│  ├─ Port Mapping: 80 → Pod:8080
+│  └─ AWS Resource: Network Load Balancer
+│
+├─ Environment Variables:
+│  ├─ JAVA_OPTS: -Xms512m -Xmx512m
+│  ├─ JENKINS_HOME: /var/jenkins_home
+│  └─ Jenkins plugins: Configured via ConfigMap
+│
+├─ Security Context:
+│  ├─ Run as User: 1000 (jenkins user)
+│  ├─ Run as Group: 1000 (jenkins group)
+│  ├─ Read-only Root FS: false
+│  └─ Privileged: false
+│
+├─ Volume Mounts:
+│  ├─ /var/jenkins_home: PVC (50Gi)
+│  ├─ /var/run/secrets: SA token (auto-mounted)
+│  └─ /tmp: emptyDir (temporary, auto-cleaned)
+│
+├─ Liveness Probe:
+│  ├─ HTTP GET: http://localhost:8080/login
+│  ├─ Initial Delay: 60s
+│  ├─ Period: 10s
+│  ├─ Timeout: 5s
+│  └─ Failure Threshold: 5 (50s total)
+│
+├─ Readiness Probe:
+│  ├─ HTTP GET: http://localhost:8080/login
+│  ├─ Initial Delay: 60s
+│  ├─ Period: 10s
+│  ├─ Timeout: 5s
+│  └─ Failure Threshold: 3
+│
+└─ Lifecycle Events:
+   ├─ postStart: Plugin installation hook
+   ├─ preStop: Graceful shutdown (30s termination grace)
+   └─ SIGTERM handling: Jenkins waits for builds to complete
+
+Pre-installed Plugins (25+):
+
+Core Infrastructure (5):
+├─ workflow-aggregator v596.v8c21c963d92d
+│  └─ Declarative pipeline, pipeline basics
+├─ pipeline-model-definition v2.2176.v5abc0f9e3ff7
+│  └─ Scripted pipeline support
+├─ pipeline-stage-view v2.32
+│  └─ Visual stage representation
+├─ kubernetes v1.32.0
+│  └─ Kubernetes cloud provider integration
+└─ kubernetes-credentials-provider v0.9.2
+   └─ Kubernetes secret integration
+
+Version Control & Source (4):
+├─ git v5.2.2
+│  └─ Git repository operations
+├─ github v1.37.0
+│  └─ GitHub webhook integration
+├─ gitlab-plugin v1.7.16
+│  └─ GitLab integration
+└─ bitbucket v0.10.0
+   └─ Bitbucket integration
+
+Build Tools (4):
+├─ docker-workflow v530.vb22cf2ad5b22
+│  └─ Build and push Docker images
+├─ docker-plugin v1.2.12
+│  └─ Docker agent provider
+├─ maven-plugin v3.22
+│  └─ Maven build support
+└─ gradle v2.8
+   └─ Gradle build support
+
+Credentials & Secrets (3):
+├─ credentials v1296.v29fef1b_9a_e59
+│  └─ Credential storage and management
+├─ credentials-binding v604.vd41181ccb_228
+│  └─ Inject credentials into builds
+└─ aws-credentials v191.vdd69dbfb_2e84
+   └─ AWS IAM credential provider
+
+Configuration Management (1):
+└─ configuration-as-code v1688.v5dfc2591f370
+   └─ JCasC for declarative config
+
+UI & Utilities (8):
+├─ blueocean v1.27.9
+│  └─ Modern, visual Jenkins interface
+├─ timestamper v1.26
+│  └─ Add timestamps to console output
+├─ ws-cleanup v0.45
+│  └─ Workspace cleanup after builds
+├─ build-timeout v1.25
+│  └─ Auto-terminate long builds
+├─ ansicolor v1.0.2
+│  └─ Color ANSI output in console
+├─ rebuild v1.34
+│  └─ Re-trigger builds with parameters
+├─ matrix-auth v3.2.0
+│  └─ Role-based authorization
+└─ role-strategy v588.v7a_3d22e9a_f2e
+   └─ Manage roles and permissions
+
+Kubernetes Agent Configuration:
+├─ Kubernetes Cloud:
+│  ├─ Kubernetes URL: https://kubernetes.default
+│  ├─ Namespace: jenkins
+│  ├─ Jenkins URL: Jenkins service DNS
+│  └─ Jenkins Agent Port: 50000
+│
+├─ Agent Pod Template:
+│  ├─ Base Image: jenkins/inbound-agent:latest
+│  ├─ CPU Request: 100m
+│  ├─ Memory Request: 128Mi
+│  ├─ CPU Limit: 500m
+│  ├─ Memory Limit: 512Mi
+│  ├─ Startup Command: Agent connects back to Jenkins
+│  └─ Timeout: 5 minutes (pod stuck cleanup)
+│
+└─ Agent Features:
+   ├─ Dynamic Spawning: Pod created when build starts
+   ├─ Auto-termination: Pod deleted after build completes
+   ├─ Resource Efficiency: Only running pods consume resources
+   ├─ Horizontal Scaling: Multiple agents for parallel builds
+   └─ Sandbox: Isolated pod per build
 ```
 
 ---
