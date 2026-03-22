@@ -169,7 +169,6 @@ resource "helm_release" "jenkins" {
           # Git plugins
           "git:latest",
           "github:latest",
-          "gitlab-plugin:latest",
           "bitbucket:latest",
           
           # Credentials management
@@ -224,6 +223,10 @@ resource "helm_release" "jenkins" {
   depends_on = [
     kubernetes_service_account.jenkins,
     kubernetes_cluster_role_binding.jenkins,
-    kubernetes_persistent_volume_claim.jenkins
+    kubernetes_persistent_volume_claim.jenkins,
+    kubernetes_storage_class.jenkins_ebs,
+    aws_eks_addon.ebs_csi_driver,
+    aws_eks_addon.cni,
+    aws_eks_addon.coredns
   ]
 }
