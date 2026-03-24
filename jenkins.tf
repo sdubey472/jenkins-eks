@@ -140,6 +140,7 @@ resource "helm_release" "jenkins" {
           username = "admin"
           password = "ChangeMePassword123!"
         }
+        executors = 2
         serviceType   = "LoadBalancer"
         servicePort   = 80
         targetPort    = 8080
@@ -195,6 +196,39 @@ resource "helm_release" "jenkins" {
           # Blue Ocean UI (optional modern UI)
           "blueocean:latest"
         ]
+
+        numExecutors = 2
+
+        JCasC = {
+          defaultConfig = true
+          configScripts = {
+            kubernetes = <<-EOT
+              jenkins:
+                clouds:
+                - kubernetes:
+                    name: kubernetes
+                    serverUrl: https://kubernetes.default
+                    namespace: jenkins
+                    skipTlsVerify: true
+                    containerCap: 10
+                    connectTimeout: 30
+                    readTimeout: 60
+                    podRetention: Never
+                    templates:
+                    - name: jenkins-agent
+                      label: jenkins-agent
+                      serviceAccount: jenkins
+                      containers:
+                      - name: jnlp
+                        image: jenkins/inbound-agent:latest-jdk21
+                        ttyEnabled: true
+                        resourceRequestCpu: '100m'
+                        resourceRequestMemory: '256Mi'
+                        resourceLimitCpu: '1000m'
+                        resourceLimitMemory: '1Gi'
+            EOT
+          }
+        }
       }
 
       persistence = {

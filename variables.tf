@@ -91,3 +91,48 @@ variable "tags" {
     Environment = "prod"
   }
 }
+
+# Prometheus variables
+variable "prometheus_storage_size" {
+  description = "Prometheus persistent volume size"
+  type        = string
+  default     = "50Gi"
+}
+
+variable "prometheus_helm_version" {
+  description = "Prometheus kube-prometheus-stack Helm chart version"
+  type        = string
+  default     = "57.0.0"
+}
+
+variable "prometheus_service_type" {
+  description = "Service type for Prometheus (LoadBalancer, NodePort, or ClusterIP)"
+  type        = string
+  default     = "LoadBalancer"
+}
+
+# Grafana variables
+variable "grafana_storage_size" {
+  description = "Grafana persistent volume size"
+  type        = string
+  default     = "10Gi"
+}
+
+variable "grafana_helm_version" {
+  description = "Grafana Helm chart version"
+  type        = string
+  default     = "7.0.8"
+}
+
+variable "grafana_admin_password" {
+  description = "Grafana admin password"
+  type        = string
+  sensitive   = true
+  default     = "admin123"
+}
+
+variable "grafana_service_type" {
+  description = "Service type for Grafana (LoadBalancer, NodePort, or ClusterIP)"
+  type        = string
+  default     = "LoadBalancer"
+}

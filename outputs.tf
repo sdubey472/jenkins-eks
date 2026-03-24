@@ -49,6 +49,43 @@ output "vpc_cidr" {
   value       = aws_vpc.main.cidr_block
 }
 
+# Observability Stack Outputs
+output "monitoring_namespace" {
+  description = "Monitoring namespace"
+  value       = kubernetes_namespace.monitoring.metadata[0].name
+}
+
+output "prometheus_endpoint" {
+  description = "Prometheus service endpoint"
+  value       = kubernetes_service.prometheus_external.status[0].load_balancer[0].ingress[0].hostname != "" ? "http://${kubernetes_service.prometheus_external.status[0].load_balancer[0].ingress[0].hostname}:9090" : "Pending"
+}
+
+output "prometheus_service_type" {
+  description = "Prometheus service type"
+  value       = kubernetes_service.prometheus_external.spec[0].type
+}
+
+output "grafana_endpoint" {
+  description = "Grafana service endpoint"
+  value       = kubernetes_service.grafana_external.status[0].load_balancer[0].ingress[0].hostname != "" ? "http://${kubernetes_service.grafana_external.status[0].load_balancer[0].ingress[0].hostname}:3000" : "Pending"
+}
+
+output "grafana_service_type" {
+  description = "Grafana service type"
+  value       = kubernetes_service.grafana_external.spec[0].type
+}
+
+output "grafana_admin_username" {
+  description = "Grafana admin username"
+  value       = "admin"
+}
+
+output "grafana_admin_password" {
+  description = "Grafana admin password"
+  value       = var.grafana_admin_password
+  sensitive   = true
+}
+
 output "public_subnet_ids" {
   description = "Public subnet IDs"
   value       = aws_subnet.public[*].id
